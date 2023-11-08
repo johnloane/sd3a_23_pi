@@ -1,10 +1,58 @@
-from flask import Flask, render_template
+#from flask import Flask, render_template
 import json
 import RPi.GPIO as GPIO
 import time, threading
+from pubnub.pnconfiguration import PNConfiguration
+from pubnub.pubnub import PubNub
+from dotenv import load_dotenv
+import os
+from pubnub.callbacks import SubscribeCallback
+from pubnub.enums import PNStatusCategory, PNOperationType
 
-app = Flask(__name__)
-alive = 0
+my_channel = "johns_sd3a_pi"
+
+
+load_dotenv()
+pnconfig = PNConfiguration()
+pnconfig.subscribe_key = os.environ.get('PUBNUB_SUBSCRIBE_KEY')
+pnconfig.publish_key = os.environ.get('PUBNUB_PUBLISH_KEY')
+pnconfig.user_id = "johns_iot_pi_zero"
+pubnub = PubNub(pnconfig)
+
+
+def my_publish_callback(envelope, status):
+    if not status.is_error():
+        pass
+    else:
+        pass
+
+
+class MySubscribeCallback(SubscribeCallback):
+    def presence(self, pubnub, presence):
+        pass
+
+    def status(self, pubnub, status):
+        if status.category == PNStatusCategory.PNUnexpectedDisconnectCategory:
+            pass
+        elif status.category == PNStatusCategory.PNConnectedCategory:
+            pubnub.publish().channel(my_channel).message('Connected to Pubnub').pn_async(my_publish_callback)
+        elif status.category == PNStatusCategory.PNDecryptionErrorCategory:
+            pass
+
+    def message(self, pubnub, message):
+        print(message.message)
+
+
+
+
+
+pubnub.add_listener(MySubscribeCallback())
+
+def publish(channel, message):
+    pubnub.publish().channel(channel).message(message).pn_async(my_publish_callback)
+
+#app = Flask(__name__)
+#alive = 0
 data = {}
 
 PIR_pin = 23
@@ -14,6 +62,8 @@ GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(PIR_pin, GPIO.IN)
 GPIO.setup(Buzzer_pin, GPIO.OUT)
+
+
 
 def beep(repeat):
     for i in range(0, repeat):
@@ -27,32 +77,49 @@ def beep(repeat):
 
 
 def motion_detection():
+    data["alarm"] = False
+    trigger = False
     while True:
         if GPIO.input(PIR_pin):
             print("Motion detected")
             beep(4)
-            data["motion"] = 1
-        else:
-            data["motion"] = 0
+            publish(my_channel, {'motion':'yes'})
+            trigger = True
+        elif trigger:
+            publish(my_channel, {'motion':'no'})
+            trigger = False
+        if data["alarm"]:
+            beep(2)
         time.sleep(1)
 
 
-@app.route("/")
-def index():
-    return render_template("index.html")
+#@app.route("/")
+#def index():
+#    return render_template("index.html")
 
 
-@app.route("/keep_alive")
-def keep_alive():
-    global alive, data
-    alive += 1
-    keep_alive_count = str(alive)
-    data['keep_alive'] = keep_alive_count
-    parsed_json = json.dumps(data)
-    return str(parsed_json)
+#@app.route("/keep_alive")
+#def keep_alive():
+#    global alive, data
+#    alive += 1
+#    keep_alive_count = str(alive)
+#    data['keep_alive'] = keep_alive_count
+#    parsed_json = json.dumps(data)
+#    return str(parsed_json)
+
+
+#@app.route("/status=<name>-<action>", methods=["POST"])
+#def event(name, action):
+#    global data
+#    if name == "buzzer":
+#        if action == "on":
+#            data["alarm"] = True
+#        elif action == "off":
+#            data["alarm"] = False
+#    return str("Ok")
 
 
 if __name__ == '__main__':
     sensorsThread = threading.Thread(target=motion_detection)
     sensorsThread.start()
-    app.run(host="172.20.10.3", port="5000")
+    pubnub.subscribe().channels(my_channel).execute()
